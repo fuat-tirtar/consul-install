@@ -1,10 +1,20 @@
-Yeni Consul Kurulumu-Eski Consul Migraiton Adımları
+## 1. Local Path Provisioner Kurulumu
+## Consul server pod'larının storage ihtiyacı için local-path StorageClass kullanılmaktadır.
+
 kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
-values.yaml 
+
+## StorageClass'ın oluştuğunu kontrol etmek için:
+
+kubectl get storageclass
+local-path veya nfs 
+
+## 2. Consul values.yaml
+Yeni Consul cluster'ı aşağıdaki Helm değerleri kullanılarak kurulabilir:
 
 global:
   name: consul
   datacenter: dc1
+
   acls:
     manageSystemACLs: true
 
@@ -12,8 +22,10 @@ server:
   enabled: true
   replicas: 2
   bootstrapExpect: 2
+
   storage: 5Gi
   storageClass: local-path
+
   resources:
     requests:
       memory: "256Mi"
@@ -26,9 +38,11 @@ client:
   enabled: true
   grpc: true
   exposeGossipPorts: true
+
   hostPort:
     http: 8500
     grpc: 8502
+
   resources:
     requests:
       cpu: "100m"
@@ -45,45 +59,209 @@ ui:
 connectInject:
   enabled: false
 
-----------------------------------------------------------------------------
-Çalıştırılan komutlar:
+## Production ortamında replicas, resource limitleri ve storage değerleri ortamın ihtiyacına göre değiştirilmelidir.
+
+## 3. Consul Namespace Oluşturma
 kubectl create namespace consul
+
+## Namespace'in oluştuğunu kontrol etmek için:
+kubectl get namespace consul
+
+## 4. HashiCorp Helm Repository Ekleme
 helm repo add hashicorp https://helm.releases.hashicorp.com
 helm repo update
-helm search repo hashicorp/consul --versions   ##En son latest versionu bul
 
-##kurulum     --> helm install consul hashicorp/consul   --version 2.0.2   -f values.yaml   -n consul   --skip-crds 
-##token şifre --> kubectl get secret consul-bootstrap-acl-token -n consul -o jsonpath='{.data.token}' | base64 --decode; echo
+## Mevcut Consul Helm chart versiyonlarını görmek için:
 
-##Bu şifreyi değiştirmek için de --> kubectl exec -it consul-server-0 -n consul -- consul acl token create -policy-name="global-management" -secret="İSTEDİĞİN KEYİ YAZ" -token="DEFAULT KEY"
+helm search repo hashicorp/consul --versions
+## Kullanılacak versiyon örneğin: 2.0.2
 
--------------------------------------------------------------------------------
-Eski Consul ortamındaki tüm Key-Value (KV) verilerinin kesintisiz bir şekilde yedeklenmesi (export), doğruluğunun kontrol edilmesi, 
-ACL koruması aktif olan Yeni Consul'a aktarılması (import) ve yeni Consul ortamı için yetkili özel erişim token'larının tanımlanması adımları;
+## Kurulum sırasında kullanılan Helm chart versiyonunun ortamlar arasında aynı olması migration sürecini daha kontrollü hale getirir.
 
-** Lensden işlem yapıyoruz. İlk olarak eski consula terminalden bağlanıyoruz.
+## 5. Yeni Consul Kurulumu
+## Yeni Consul cluster'ını aşağıdaki komut ile kurabilirsiniz:
 
-# 1. Eski Consul podu içinde verileri /tmp/backup.json dosyasına export etme
-kubectl exec -it consul-server-0 -n consul -- sh -c "consul kv export -token='defaultkeysifremiz' > /tmp/backup.json"
+helm install consul hashicorp/consul \
+  --version 2.0.2 \
+  -f values.yaml \
+  -n consul \
+  --skip-crds
 
-# 2. Oluşturulan yedek dosyasını local makineye (PowerShell) kopyalama
+## Kurulum sonrası pod'ları kontrol edin:
+kubectl get pods -n consul
+## Consul servislerini kontrol etmek için:
+kubectl get svc -n consul
+
+## 6. Consul Bootstrap ACL Token'ını Alma
+## ACL yönetimi aktif olduğu için Consul kurulumu sonrasında oluşturulan bootstrap token alınmalıdır.
+
+kubectl get secret consul-bootstrap-acl-token \
+  -n consul \
+  -o jsonpath='{.data.token}' | base64 --decode; echo
+
+## Bu token migration sırasında KV verilerinin import/export işlemlerinde kullanılabilir.
+## Güvenlik: Bootstrap token'ı GitHub repository'sine, README dosyasına veya herhangi bir public ortama kesinlikle yazmayın.
+
+## 7. Özel ACL Token Oluşturma
+## Gerekli durumlarda yeni Consul ortamı için özel bir ACL token oluşturulabilir.
+
+Örnek:
+kubectl exec -it consul-server-0 -n consul -- \
+  consul acl token create \
+  -policy-name="global-management" \
+  -secret="YOUR_NEW_SECRET" \
+  -token="BOOTSTRAP_TOKEN"
+
+## Buradaki değerler:
+YOUR_NEW_SECRET   -> Oluşturmak istediğiniz token
+BOOTSTRAP_TOKEN   -> Consul bootstrap token ## 
+
+## Gerçek secret/token değerleri komut geçmişinde veya Git repository'sinde tutulmamalıdır.
+## 8. Eski Consul KV Verilerinin Export Edilmesi
+
+## Bu aşamada eski Consul ortamındaki KV verileri yedeklenir.
+## Öncelikle eski Consul server pod'una erişildiğinden emin olun.
+## Örnek:
+
+kubectl get pods -n consul
+## KV verilerini eski Consul pod'u içerisinde /tmp/backup.json dosyasına export edin:
+
+kubectl exec -it consul-server-0 -n consul -- \
+  sh -c "consul kv export -token='OLD_CONSUL_TOKEN' > /tmp/backup.json"
+
+## OLD_CONSUL_TOKEN yerine gerçek token kullanılmalıdır. Gerçek token README'ye eklenmemelidir.
+
+## 9. Backup Dosyasını Local Makineye Kopyalama
+## Windows / PowerShell kullanılıyorsa:
+
 kubectl cp "consul-server-0:/tmp/backup.json" ".\consul-backup.json" -n consul
 
-# 3. Eski pod içindeki geçici dosyayı temizleme
-kubectl exec -it consul-server-0 -n consul -- rm /tmp/backup.json
+## Dosyanın local makineye geldiğini kontrol edin:
 
-Kontrol edilir, consuldaki verinin boyutu
-# 1. Dosya boyutunu kontrol etme (örn: ~173 KB başarıyla çekildi)
-Get-Item .\consul_kv_backup.json
-# 2. Dosya içeriğinin ilk satırlarını doğrulama
-Get-Content .\consul_kv_backup.json -Head 15
+Get-Item .\consul-backup.json
 
--------------------------------------------------------------------------------
-4. Yeni Consul Ortamına Aktarım İşlemleri (Import)
-İndirdiğimiz consul_kv_backup.json dosyası, yeni Consul kümesinin aktif bootstrap token'ı kullanılarak aktarılmış ve veriler kontrol edilmiştir.
+## Dosya boyutunu kontrol etmek için:
 
-# 1. Yedeği yeni Consul ortama yükleme (Import)
-Get-Content .\consul_kv_backup.json -Raw | kubectl exec -i consul-server-0 -n consul -- consul kv import -token="yeniconsuldefaultkeyi" -
+(Get-Item .\consul-backup.json).Length
 
-# 2. Aktarılan Key-Value verilerini yeni ortamda doğrulama
-kubectl exec -it consul-server-0 -n consul -- consul kv get -token="yeniconsuldefaultkeyi" -recurse
+## 10. Backup Dosyasını Kontrol Etme
+## Backup dosyasının içeriğinin doğru şekilde oluşturulduğunu kontrol edin:
+
+Get-Content .\consul-backup.json -Head 15
+
+## JSON formatının geçerli olup olmadığını kontrol etmek için PowerShell'de:
+
+Get-Content .\consul-backup.json -Raw | ConvertFrom-Json
+
+## Eğer JSON parse edilebiliyorsa backup dosyası temel olarak doğrulanmış olur.
+
+## 11. Eski Consul'daki Geçici Backup Dosyasını Silme
+## Backup local makineye başarıyla alındıktan sonra eski Consul pod'undaki geçici dosya silinebilir:
+
+kubectl exec -it consul-server-0 -n consul -- \
+  rm /tmp/backup.json
+
+## 12. Yeni Consul Ortamına KV Import
+## Backup dosyası yeni Consul cluster'ına aktarılır.
+
+## PowerShell:
+
+Get-Content .\consul-backup.json -Raw |
+  kubectl exec -i consul-server-0 -n consul -- \
+  consul kv import -token="NEW_CONSUL_TOKEN" -
+
+## Burada:
+
+## NEW_CONSUL_TOKEN
+
+## yeni Consul ortamının yetkili token'ıdır.
+
+## 13. Aktarılan KV Verilerini Doğrulama
+## Import işlemi tamamlandıktan sonra yeni Consul ortamındaki KV verileri kontrol edilir:
+
+kubectl exec -it consul-server-0 -n consul -- \
+  consul kv get \
+  -token="NEW_CONSUL_TOKEN" \
+  -recurse
+
+## Belirli bir key'i kontrol etmek için:
+
+kubectl exec -it consul-server-0 -n consul -- \
+  consul kv get \
+  -token="NEW_CONSUL_TOKEN" \
+  "example/key"
+
+## 14. Migration Kontrol Listesi
+## Migration tamamlandıktan sonra aşağıdaki kontroller yapılmalıdır:
+
+## Yeni Consul cluster çalışıyor
+ Consul server pod'ları Running durumda
+ Consul client pod'ları çalışıyor
+ local-path veya nfs StorageClass mevcut
+ Consul ACL sistemi aktif
+ Bootstrap token başarıyla oluşturuldu
+ Eski Consul KV verileri export edildi
+ Backup dosyası local makineye alındı
+ Backup dosyası kontrol edildi
+ Yeni Consul ortamına KV import edildi
+ KV verileri yeni ortamda doğrulandı
+ Gerekli özel ACL token'ları oluşturuldu
+ Uygulamaların yeni Consul endpoint'ine erişebildiği doğrulandı ##
+
+Migration Akışı
+                 ESKİ CONSUL
+                      |
+                      |
+                KV Export
+                      |
+                      v
+              backup.json
+                      |
+                      |
+              Local Machine
+                      |
+                      |
+                KV Import
+                      |
+                      v
+                 YENİ CONSUL
+                      |
+                      |
+                KV Validation
+                      |
+                      v
+              Migration Tamamlandı
+
+## Notlar
+Token Güvenliği
+Token'ları doğrudan komut içerisinde veya Git repository'sinde saklamak yerine güvenli bir secret management yöntemi kullanılmalıdır.##
+
+## Örneğin:
+
+OLD_CONSUL_TOKEN="..."
+NEW_CONSUL_TOKEN="..."
+
+gibi değerler README içerisinde gerçek credential olarak paylaşılmamalıdır.## 
+
+## Production Ortamı
+Bu dokümandaki values.yaml örneği temel bir kurulum/migration senaryosu içindir. Production ortamında ayrıca aşağıdaki konular değerlendirilmelidir:
+
+Persistent storage
+Backup/restore stratejisi
+Consul server replica sayısı
+Resource limit/request değerleri
+ACL policy yönetimi
+TLS
+Gossip encryption
+NetworkPolicy
+Monitoring
+Loglama
+Disaster recovery
+Kullanılan Teknolojiler
+Kubernetes
+Helm
+HashiCorp Consul
+Consul CLI
+Local Path Provisioner
+PowerShell
+Lens  ##
