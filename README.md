@@ -12,3 +12,12 @@ Migration süreci temel olarak şu aşamalardan oluşmaktadır:
 *Yeni Consul ortamına KV verilerinin import edilmesi
 *Aktarılan verilerin doğrulanması
 *Gerekli ACL token'larının oluşturulması
+
+Gereksinimler
+Migration işlemi öncesinde aşağıdaki araçların kurulu olması gerekir:
+
+Kubernetes / kubectl
+Helm
+Consul CLI
+Kubernetes cluster erişimi
+Lens (opsiyonel)
