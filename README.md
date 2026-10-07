@@ -3,12 +3,12 @@ Bu doküman, Kubernetes üzerinde yeni bir HashiCorp Consul cluster'ının kurul
 
 Migration süreci temel olarak şu aşamalardan oluşmaktadır:
 
-1-Local Path Provisioner kurulumu																																																																																																																					
-2-Yeni Consul ortamının kurulması
-3-Consul ACL yapılandırmasının yapılması
-4-Eski Consul KV verilerinin export edilmesi
-5-Backup dosyasının local makineye alınması
-6-Backup dosyasının kontrol edilmesi
-7-Yeni Consul ortamına KV verilerinin import edilmesi
-8-Aktarılan verilerin doğrulanması
-9-Gerekli ACL token'larının oluşturulması
+*Local Path Provisioner kurulumu																																																																																													
+*Yeni Consul ortamının kurulması
+*Consul ACL yapılandırmasının yapılması
+*Eski Consul KV verilerinin export edilmesi
+*Backup dosyasının local makineye alınması
+*Backup dosyasının kontrol edilmesi
+*Yeni Consul ortamına KV verilerinin import edilmesi
+*Aktarılan verilerin doğrulanması
+*Gerekli ACL token'larının oluşturulması
